@@ -26,8 +26,8 @@ const int word_size = 100;
 const int subword_size = 32;
 const int subwords_count = (int)ceil( word_size / (double)subword_size);
 
-const std::string words_file_name = "./100-10000/words.csv";
-const std::string pairs_file_name = "./100-10000/pairs.csv";
+const std::string words_file_name = "./100-20000/words.csv";
+const std::string pairs_file_name = "./100-20000/pairs.csv";
 
 __global__ void searchHammingOne(unsigned int *words, unsigned int *output, unsigned int wordsCount, unsigned int subwords_count, unsigned int ints_per_words_count, unsigned int bits_per_subword, int *foundWordsCount)
 {
@@ -36,26 +36,31 @@ __global__ void searchHammingOne(unsigned int *words, unsigned int *output, unsi
 	if (wordIndex >= wordsCount)
 		return;
 
+	unsigned int word[subword_size];
+	for (size_t i = 0; i < subwords_count; i++)
+	{
+		word[i] = words[wordIndex * subwords_count + i];
+	}
+
 	int checkedIndex = wordIndex + 1;
 	unsigned int distance;
-	int index = wordIndex * ints_per_words_count;
+	int offset, value, index = wordIndex * ints_per_words_count;
 
 	while (checkedIndex < wordsCount)
 	{
 		distance = 0;
 		for (size_t i = 0; i < subwords_count && distance < 2; i++)
 		{
-			distance += __popc(words[subwords_count * wordIndex + i] ^ words[subwords_count * checkedIndex + i]);
+			distance += __popc(word[i] ^ words[subwords_count * checkedIndex + i]);
 		}
-		if (distance == 1)
+		if (!(distance >> 1))
 		{
-			atomicAdd(foundWordsCount, 1);
-			int index = wordIndex * ints_per_words_count;
-			int offset = checkedIndex / bits_per_subword;
-			int value = 1 << bits_per_subword - 1 - checkedIndex % bits_per_subword;
-			output[index + offset] += value;
+			//atomicAdd(foundWordsCount, 1);
+			offset = checkedIndex / bits_per_subword;
+			value = 1 << bits_per_subword - 1 - checkedIndex % bits_per_subword;
+			output[index + offset] |= value;
 		}
-		checkedIndex++;	
+		checkedIndex++;
 	}
 }
 
@@ -71,7 +76,7 @@ int main()
 	std::cout << " Done!" << std::endl;
 
 	const int words_count = words.size() / subwords_count;
-	// adjust to demensions to size of ints - each bits represents one word
+	// adjust the demensions to size of ints - each bits represents one word
 	const int ints_per_words_count = ceil(words_count / 32.0);
 	const int output_ints_count = words_count * ints_per_words_count;
 	const int output_size = output_ints_count * sizeof(int);
@@ -89,17 +94,18 @@ int main()
 	cudaMalloc(&d_count, sizeof(int));
 	cudaMalloc(&d_output, output_size);
 	h_output = new unsigned int[output_ints_count];
-	for (size_t i = 0; i < 5; i++)
+	for (size_t i = 0; i < 10; i++)
 	{
-
 
 		cudaMemset(d_count, 0, sizeof(int));
 		cudaMemset(d_output, 0, output_size);
 
 
 		cudaEventRecord(start, 0);
-		searchHammingOne <<<blocks, threads>>> (wordsPtr, d_output, words.size() / subwords_count, subwords_count, ints_per_words_count, subword_size, d_count);
+		searchHammingOne <<<blocks, threads, threads * subwords_count * sizeof(int) >>> (wordsPtr, d_output, words.size() / subwords_count, subwords_count, ints_per_words_count, subword_size, d_count);
 		cudaEventRecord(stop, 0);
+		cudaError_t err = cudaGetLastError();
+		if (err != cudaSuccess) printf("%s\n", cudaGetErrorString(err));
 
 	
 		cudaMemcpy(&h_count, d_count, sizeof(int), cudaMemcpyDeviceToHost);
@@ -108,19 +114,18 @@ int main()
 		cudaDeviceSynchronize();
 		cudaEventElapsedTime(&time, start, stop);
 
-		std::cout << h_count << std::endl;
-		std::cout << "B: " << std::setw(3) << blocks << " T: " << std::setw(4) << threads <<  " time: " << time << " 100-?000" << std::endl;
-		h_count = 0;
+		int parallel_count= 0;
 		int temp;
 		for (size_t i = 0; i < output_ints_count; i++)
 		{
 			temp = __popcnt(h_output[i]);
-			h_count += temp;
+			parallel_count += temp;
 			//if (i % ints_per_words_count == 0)
 			//	std::cout << std::endl;
 			//std::cout << temp << " ";
 		}
-		std::cout << h_count << std::endl;
+
+		std::cout << "B: " << std::setw(3) << blocks << " T: " << std::setw(4) << threads << " count atomic: " << std::setw(6) << h_count << " count parallel: " << std::setw(6) << parallel_count <<  " time: " << time << " 100-20000" << std::endl;
 	}
 	cudaEventDestroy(start);
 	cudaEventDestroy(stop);
