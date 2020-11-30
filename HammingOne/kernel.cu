@@ -23,11 +23,12 @@ thrust::device_vector<unsigned int> readWords();
 void readPairs();
 
 const int word_size = 100;
+const int min_words_count = 10000;
 const int subword_size = 32;
 const int subwords_count = (int)ceil( word_size / (double)subword_size);
 
-const std::string words_file_name = "./100-20000/words.csv";
-const std::string pairs_file_name = "./100-20000/pairs.csv";
+const std::string words_file_name = std::string("./") + std::to_string(word_size) + std::string("-") + std::to_string(min_words_count) + std::string("/words.csv");
+const std::string pairs_file_name = std::string("./") + std::to_string(word_size) + std::string("-") + std::to_string(min_words_count) + std::string("/pairs.csv");
 
 __global__ void searchHammingOne(unsigned int *words, unsigned int *output, unsigned int wordsCount, unsigned int subwords_count, unsigned int ints_per_words_count, unsigned int bits_per_subword, int *foundWordsCount)
 {
@@ -36,7 +37,8 @@ __global__ void searchHammingOne(unsigned int *words, unsigned int *output, unsi
 	if (wordIndex >= wordsCount)
 		return;
 
-	unsigned int word[subword_size];
+	unsigned int *word = new unsigned int [subwords_count];
+
 	for (size_t i = 0; i < subwords_count; i++)
 	{
 		word[i] = words[wordIndex * subwords_count + i];
@@ -62,6 +64,8 @@ __global__ void searchHammingOne(unsigned int *words, unsigned int *output, unsi
 		}
 		checkedIndex++;
 	}
+
+	delete[] word;
 }
 
 ////#define GENERATE_WORDS
@@ -138,9 +142,9 @@ int main()
 
 void loadWords()
 {
-	auto generator = WordsGenerator(words_file_name, pairs_file_name);
+	auto generator = WordsGenerator<word_size, min_words_count>(words_file_name, pairs_file_name);
 	auto words = generator.generateWords();
-	generator.generatePairs();
+	//generator.generatePairs();
 }
 
 thrust::device_vector<unsigned int> readWords()
