@@ -15,20 +15,22 @@
 #include <thrust/host_vector.h>
 #include <thrust/device_vector.h>
 
-
-void loadWords();
-thrust::device_vector<unsigned int> parseWord(std::string input);
-void parseWord(std::string input, thrust::device_vector<unsigned int>& words);
-thrust::device_vector<unsigned int> readWords();
-void readPairs();
-
-const int word_size = 100;
-const int min_words_count = 10000;
+const int word_size = 1000;
+const int min_words_count = 100000;
 const int subword_size = 32;
 const int subwords_count = (int)ceil( word_size / (double)subword_size);
 
 const std::string words_file_name = std::string("./") + std::to_string(word_size) + std::string("-") + std::to_string(min_words_count) + std::string("/words.csv");
 const std::string pairs_file_name = std::string("./") + std::to_string(word_size) + std::string("-") + std::to_string(min_words_count) + std::string("/pairs.csv");
+
+std::unordered_set<std::bitset<word_size>> loadWords();
+std::vector<unsigned> loadWordsForGPU();
+thrust::device_vector<unsigned int> parseWord(std::string input);
+void parseWord(std::string input, thrust::device_vector<unsigned int>& words);
+thrust::device_vector<unsigned int> readWords();
+thrust::device_vector<unsigned int> readWords(std::unordered_set<std::bitset<word_size>> generatedWords);
+thrust::device_vector<unsigned int> readWords(std::vector<unsigned int> generatedWords);
+void readPairs();
 
 __global__ void searchHammingOne(unsigned int *words, unsigned int *output, unsigned int wordsCount, unsigned int subwords_count, unsigned int ints_per_words_count, unsigned int bits_per_subword, int *foundWordsCount)
 {
@@ -68,16 +70,15 @@ __global__ void searchHammingOne(unsigned int *words, unsigned int *output, unsi
 	delete[] word;
 }
 
-////#define GENERATE_WORDS
+
+
 int main()
 {	
-#ifdef GENERATE_WORDS
-	loadWords();
-#else
-	std::cout << "Reading data...";
-	auto words = readWords();
+	std::cout << "Reading data..." << std::endl;
+	auto generatedWords = loadWordsForGPU();
+	auto words = readWords(generatedWords);
 	auto wordsPtr = thrust::raw_pointer_cast(words.begin().base());
-	std::cout << " Done!" << std::endl;
+	std::cout << "Done!" << std::endl;
 
 	const int words_count = words.size() / subwords_count;
 	// adjust the demensions to size of ints - each bits represents one word
@@ -88,6 +89,9 @@ int main()
 	int blocks = (int)ceil(words.size() / (double)threads);
 	int *d_count, h_count;
 	unsigned int *d_output, *h_output;
+
+	std::cout << "Words count: " << words_count << std::endl;
+	std::cout << "Output size: " << output_size << std::endl;
 
 	float time;
 	cudaEvent_t start, stop; 
@@ -106,7 +110,7 @@ int main()
 
 
 		cudaEventRecord(start, 0);
-		searchHammingOne <<<blocks, threads, threads * subwords_count * sizeof(int) >>> (wordsPtr, d_output, words.size() / subwords_count, subwords_count, ints_per_words_count, subword_size, d_count);
+		searchHammingOne <<<blocks, threads>>> (wordsPtr, d_output, words.size() / subwords_count, subwords_count, ints_per_words_count, subword_size, d_count);
 		cudaEventRecord(stop, 0);
 		cudaError_t err = cudaGetLastError();
 		if (err != cudaSuccess) printf("%s\n", cudaGetErrorString(err));
@@ -136,42 +140,24 @@ int main()
 	cudaFree(d_count);
 	cudaFree(d_output);
 	delete[] h_output;
-#endif
 	return 0;
 }
 
-void loadWords()
+
+std::vector<unsigned> loadWordsForGPU()
 {
 	auto generator = WordsGenerator<word_size, min_words_count>(words_file_name, pairs_file_name);
-	auto words = generator.generateWords();
-	//generator.generatePairs();
+	return generator.generateWordsForGPU();
 }
 
-thrust::device_vector<unsigned int> readWords()
+thrust::device_vector<unsigned int> readWords(std::vector<unsigned int> generatedWords)
 {
-	std::ifstream wordsStream{ words_file_name };
-	//Stopwatch stopwatch;
-	std::string word;
-
+	Stopwatch stopwatch;
 	thrust::device_vector<unsigned int> words;
-
-	//stopwatch.Start();
-	while (!wordsStream.eof())
-	{
-		std::getline(wordsStream, word);
-		if (!word.empty()) parseWord(word, words);
-		//std::cout << "word: " << word << std::endl;
-	}
-
-	//stopwatch.Stop();
-	wordsStream.close();
-
-	//for (size_t i = 0; i < words.size(); i++)
-	//{
-	//	if (i % subwords_count == 0)
-	//		std::cout << std::endl;
-	//	std::cout << words[i] << " ";
-	//}
+	std::cout << "Copying to GPU memory" << std::endl;
+	stopwatch.Start();
+	words.insert(words.begin(), generatedWords.begin(), generatedWords.end());
+	stopwatch.Stop();
 
 	return words;
 }
@@ -196,33 +182,6 @@ void readPairs()
 
 	//stopwatch.Stop();
 	pairsStream.close();
-}
-
-void parseWord(std::string input, thrust::device_vector<unsigned int> & words)
-{
-	// '0' = 48/ 0b0011000
-	// '1' = 49/ 0b0011001 
-	// Works faste than stoi with base 2!
-	const unsigned char zeroAsciiCode = 48;
-	
-	unsigned int maxValue = pow(2, subword_size - 1);
-	unsigned int currentValue = maxValue;
-	words.push_back(0);
-	auto index = words.size() - 1;
-
-	for (auto letter : input)
-	{
-		if (!currentValue)
-		{
-			currentValue = maxValue;
-			words.push_back(0);
-			//std::cout << word[index] << std::endl;
-			index++;
-		}
-		if (letter - zeroAsciiCode)
-			words[index] += currentValue;
-		currentValue >>= 1;
-	}
 }
 
 thrust::device_vector<unsigned int> parseWord(std::string input)
@@ -252,5 +211,87 @@ thrust::device_vector<unsigned int> parseWord(std::string input)
 	}
 
 	return word;
+}
+
+std::unordered_set<std::bitset<word_size>> loadWords()
+{
+	auto generator = WordsGenerator<word_size, min_words_count>(words_file_name, pairs_file_name);
+	return generator.generateWords();
+	//generator.generatePairs();
+}
+
+thrust::device_vector<unsigned int> readWords(std::unordered_set<std::bitset<word_size>> generatedWords)
+{
+
+	Stopwatch stopwatch;
+
+	thrust::device_vector<unsigned int> words;
+
+	stopwatch.Start();
+	unsigned int subword;
+	for (auto word : generatedWords)
+	{
+		subword = 0;
+		for (size_t i = 0; i < word_size; i++)
+		{
+			if (i > 0 && i % subword_size == 0)
+			{
+				words.push_back(subword);
+				subword = 0;
+			}
+			subword |= word[i] << subword_size - 1 - i % subword_size;
+		}
+		words.push_back(subword);
+	}
+	stopwatch.Stop();
+
+	return words;
+}
+
+thrust::device_vector<unsigned int> readWords()
+{
+	std::ifstream wordsStream{ words_file_name };
+	Stopwatch stopwatch;
+	std::string word;
+	thrust::device_vector<unsigned int> words;
+
+	stopwatch.Start();
+	while (!wordsStream.eof())
+	{
+		std::getline(wordsStream, word);
+		if (!word.empty()) parseWord(word, words);
+		//std::cout << "word: " << word << std::endl;
+	}
+
+	stopwatch.Stop();
+	wordsStream.close();
+	return words;
+}
+
+void parseWord(std::string input, thrust::device_vector<unsigned int>& words)
+{
+	// '0' = 48/ 0b0011000
+	// '1' = 49/ 0b0011001 
+	// Works faste than stoi with base 2!
+	const unsigned char zeroAsciiCode = 48;
+
+	unsigned int maxValue = pow(2, subword_size - 1);
+	unsigned int currentValue = maxValue;
+	words.push_back(0);
+	auto index = words.size() - 1;
+
+	for (auto letter : input)
+	{
+		if (!currentValue)
+		{
+			currentValue = maxValue;
+			words.push_back(0);
+			//std::cout << word[index] << std::endl;
+			index++;
+		}
+		if (letter - zeroAsciiCode)
+			words[index] += currentValue;
+		currentValue >>= 1;
+	}
 }
 

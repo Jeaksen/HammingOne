@@ -86,9 +86,6 @@
     <ClInclude Include="Stopwatch.h" />
     <ClInclude Include="WordsGenerator.h" />
   </ItemGroup>
-  <ItemGroup>
-    <ClCompile Include="WordsGenerator.cpp" />
-  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
     <Import Project="$(VCTargetsPath)\BuildCustomizations\CUDA 11.1.targets" />

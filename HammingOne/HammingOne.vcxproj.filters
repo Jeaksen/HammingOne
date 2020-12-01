@@ -9,11 +9,6 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="WordsGenerator.cpp">
-      <Filter>WordsGeneration</Filter>
-    </ClCompile>
-  </ItemGroup>
-  <ItemGroup>
     <ClInclude Include="WordsGenerator.h">
       <Filter>WordsGeneration</Filter>
     </ClInclude>
