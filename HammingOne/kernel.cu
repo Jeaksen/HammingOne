@@ -14,15 +14,15 @@
 #include <thrust/host_vector.h>
 #include <thrust/device_vector.h>
 
-const int word_size = 100;
-const int words_count = 10000;
+const int word_size = 1000;
+const int words_count = 100000;
 const int subword_size = 32;
 const int subwords_count = (int)ceil(word_size / (double)subword_size);
 
-const std::string words_file_name = std::string("./") + std::to_string(word_size) + std::string("-") + std::to_string(words_count) + std::string("/words.txt");
-const std::string pairs_file_name = std::string("./") + std::to_string(word_size) + std::string("-") + std::to_string(words_count) + std::string("/pairs.txt");
-const std::string pairs_file_name_kernel = std::string("./") + std::to_string(word_size) + std::string("-") + std::to_string(words_count) + std::string("/kpairs.txt");
-const std::string pairs_file_name_kernel_verbose = std::string("./") + std::to_string(word_size) + std::string("-") + std::to_string(words_count) + std::string("/kvpairs.csv");
+const std::string words_file_name = std::string("./") + std::to_string(word_size) + std::string("-") + std::to_string(words_count) + std::string("-words.txt");
+const std::string pairs_file_name = std::string("./") + std::to_string(word_size) + std::string("-") + std::to_string(words_count) + std::string("-pairs.txt");
+const std::string pairs_file_name_kernel = std::string("./") + std::to_string(word_size) + std::string("-") + std::to_string(words_count) + std::string("-kpairs.txt");
+const std::string pairs_file_name_kernel_verbose = std::string("./") + std::to_string(word_size) + std::string("-") + std::to_string(words_count) + std::string("-kvpairs.csv");
 
 WordsGenerator<word_size, words_count> generator("", "");
 
@@ -47,21 +47,42 @@ __global__ void searchHammingOne(unsigned int* words, unsigned int* output, unsi
 
 	unsigned int* word = new unsigned int[subwords_count];
 
-	for (size_t i = 0; i < subwords_count; i++)
-	{
-		word[i] = words[wordIndex * subwords_count + i];
-	}
+	//for (size_t i = 0; i < subwords_count; i++)
+	//{
+	//	word[i] = words[wordIndex * subwords_count + i];
+	//}
 
 	int checkedIndex = wordIndex + 1;
 	unsigned int distance;
 	int offset, value, index = wordIndex * ints_per_words_count;
+
+	//while (checkedIndex < wordsCount)
+	//{
+	//	distance = 0;
+	//	for (size_t i = 0; i < subwords_count && distance < 2; i++)
+	//	{
+	//		distance += __popc(word[i] ^ words[subwords_count * checkedIndex + i]);
+	//	}
+	//	if (!(distance >> 1))
+	//	{
+	//		offset = checkedIndex / bits_per_subword;
+	//		value = 1 << bits_per_subword - 1 - checkedIndex % bits_per_subword;
+	//		output[index + offset] |= value;
+	//	}
+	//	checkedIndex++;
+	//}
+
+	for (size_t i = 0; i < subwords_count; i++)
+	{
+		word[i] = words[wordIndex + i * wordsCount];
+	}
 
 	while (checkedIndex < wordsCount)
 	{
 		distance = 0;
 		for (size_t i = 0; i < subwords_count && distance < 2; i++)
 		{
-			distance += __popc(word[i] ^ words[subwords_count * checkedIndex + i]);
+			distance += __popc(word[i] ^ words[checkedIndex + i * words_count]);
 		}
 		if (!(distance >> 1))
 		{
@@ -72,10 +93,11 @@ __global__ void searchHammingOne(unsigned int* words, unsigned int* output, unsi
 		checkedIndex++;
 	}
 
+
 	delete[] word;
 }
 
-//#define VERBOSE_PAIRS
+#define VERBOSE_PAIRS
 int main()
 {
 	generator = WordsGenerator<word_size, words_count>(words_file_name, pairs_file_name);
@@ -89,9 +111,9 @@ int main()
 
 
 	// adjust the demensions to size of ints - each bits represents one word
-	const int ints_per_words_count = ceil(words_count / 32.0);
-	const int output_ints_count = words_count * ints_per_words_count;
-	const int output_size = output_ints_count * sizeof(int);
+	const size_t ints_per_words_count = ceil(words_count / 32.0);
+	const size_t output_ints_count = words_count * ints_per_words_count;
+	const size_t output_size = output_ints_count * sizeof(int);
 	int threads = 512;
 	int blocks = (int)ceil(words.size() / (double)threads);
 
@@ -116,7 +138,7 @@ int main()
 
 	//for (size_t i = 0; i < 3; i++)
 	//{
-		//cudaFuncSetCacheConfig(searchHammingOne, cudaFuncCachePreferL1);
+	cudaFuncSetCacheConfig(searchHammingOne, cudaFuncCachePreferL1);
 	cudaMemset(d_output, 0, output_size);
 
 
@@ -127,10 +149,14 @@ int main()
 	cudaError_t err = cudaGetLastError();
 	if (err != cudaSuccess) printf("%s\n", cudaGetErrorString(err));
 
+
 	cudaMemcpy(h_output, d_output, output_size, cudaMemcpyDeviceToHost);
+
 
 	cudaDeviceSynchronize();
 	cudaEventElapsedTime(&time, start, stop);
+
+	std::cout << "B: " << std::setw(3) << blocks << " T: " << std::setw(4) << threads << " time: " << time << std::endl;
 
 	//wordPairsFile.write((char*)h_output, output_size);
 
@@ -151,7 +177,7 @@ int main()
 		}
 	}
 
-	std::cout << "B: " << std::setw(3) << blocks << " T: " << std::setw(4) << threads << " count parallel: " << std::setw(6) << parallel_count << " time: " << time << std::endl;
+	std::cout << "B: " << std::setw(3) << blocks << " T: " << std::setw(4) << threads << " count parallel: " << std::setw(6) << parallel_count << std::endl;
 	//}
 	cudaEventDestroy(start);
 	cudaEventDestroy(stop);

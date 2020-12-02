@@ -1,8 +1,5 @@
 .vs
-HammingOne/100-10000
-HammingOne/100-20000
-HammingOne/100-50000
-HammingOne/1000-100000
+HammingOne/data
 HammingOne/x64
 HammingOne/CMakeLists.txt
 x64
