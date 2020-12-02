@@ -21,6 +21,7 @@ public:
 	WordsGenerator(std::string words_file_name, std::string pairs_file_name) : words_file_name{ words_file_name }, pairs_file_name{ pairs_file_name } {};
 	//std::unordered_set<std::bitset<N>> generateWords();
 	std::vector<unsigned int> generateWordsForGPU();
+	std::vector<std::vector<unsigned int>> generateWordsForGPUStrieded();
 	void WordsGenerator<N, M>::generatePairsForGPU(unsigned int* output, int output_size, int stride);
 	void generatePairs();
 private:
@@ -28,6 +29,7 @@ private:
 	int hammingDistance(std::bitset<N> const& lhs, std::bitset<N> const& rhs);
 	void saveWord(std::queue<std::bitset<N>>&, std::vector<unsigned int>&, const std::bitset<N>&);
 	void saveWord(std::queue<std::bitset<N>>&, std::vector<unsigned int>&, std::vector<std::bitset<N>>&, const std::bitset<N>&);
+	void saveWordStride(std::queue<std::bitset<N>>&, std::vector<std::bitset<N>>&, std::vector<std::vector<unsigned int>>&, const std::bitset<N>&);
 
 };
 
@@ -117,6 +119,56 @@ std::vector<unsigned int> WordsGenerator<N, M>::generateWordsForGPU()
 	return wordsGPU;
 }
 
+template <int N, int M>
+std::vector<std::vector<unsigned int>> WordsGenerator<N, M>::generateWordsForGPUStrieded()
+{
+	std::queue<std::bitset<N>> generatingWords;
+	std::vector<std::vector<unsigned int>> wordsGPUStride;
+	std::unordered_set<std::bitset<N>> wordsSet;
+
+
+	for (size_t i = 0; i < ceil(N / 32.0); i++)
+		wordsGPUStride.push_back(std::vector<unsigned int>());
+
+	long long iter = 0;
+	Stopwatch stopwatch;
+	//std::ofstream wordFile;
+	//wordFile.open(words_file_name);
+
+	std::cout << "Genrating..." << std::endl;
+	stopwatch.Start();
+
+	auto result = wordsSet.emplace(std::bitset<N>());
+	saveWordStride(generatingWords, words, wordsGPUStride, *result.first);
+
+	while (wordsSet.size() < M)
+	{
+		std::bitset<N>& generatingWord = generatingWords.front();
+
+		for (size_t i = 0; i < N; i++)
+		{
+			if (!generatingWord[i])
+			{
+				iter++;
+				auto result = wordsSet.emplace(createAlteredWord(generatingWord, i));
+				if (result.second)
+				{
+					//wordFile << *result.first << std::endl;
+					saveWordStride(generatingWords, words, wordsGPUStride, *result.first);
+					if (wordsSet.size() == M)
+						break;
+				}
+			}
+		}
+		generatingWords.pop();
+	}
+	stopwatch.Stop();
+	//wordFile.close();
+
+	std::cout << "Total iter: " << iter << " words:" << wordsSet.size() << std::endl;
+	return wordsGPUStride;
+}
+
 
 template <int N, int M>
 void WordsGenerator<N, M>::saveWord(std::queue<std::bitset<N>>& generatingWords, std::vector<unsigned int>& wordsGPU, const std::bitset<N>& word)
@@ -141,6 +193,24 @@ void WordsGenerator<N, M>::saveWord(std::queue<std::bitset<N>>& generatingWords,
 {
 	saveWord(generatingWords, wordsGPU, word);
 	words.emplace_back(word);
+}
+
+template <int N, int M>
+void WordsGenerator<N, M>::saveWordStride(std::queue<std::bitset<N>>& generatingWords, std::vector<std::bitset<N>>& words, std::vector<std::vector<unsigned int>>& wordsGPU, const std::bitset<N>& word)
+{
+	generatingWords.push(word);
+	words.push_back(word);
+	unsigned int subword = 0;
+	for (size_t i = 0; i < N; i++)
+	{
+		if (i > 0 && i % 32 == 0)
+		{
+			wordsGPU[i / 32 - 1].emplace_back(subword);
+			subword = 0;
+		}
+		subword |= word[i] << 31 - i % 32;
+	}
+	wordsGPU[wordsGPU.size() - 1].emplace_back(subword);
 }
 
 

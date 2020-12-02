@@ -14,8 +14,8 @@
 #include <thrust/host_vector.h>
 #include <thrust/device_vector.h>
 
-const int word_size = 1000;
-const int words_count = 100000;
+const int word_size = 100;
+const int words_count = 10000;
 const int subword_size = 32;
 const int subwords_count = (int)ceil(word_size / (double)subword_size);
 
@@ -27,14 +27,16 @@ const std::string pairs_file_name_kernel_verbose = std::string("./") + std::to_s
 WordsGenerator<word_size, words_count> generator("", "");
 
 std::vector<unsigned> loadWordsForGPU();
-thrust::device_vector<unsigned int> readWords(std::vector<unsigned int> generatedWords);
+std::vector<std::vector<unsigned int>> loadWordsForGPUStride();
+thrust::device_vector<unsigned int> copyWordsToGPU(std::vector<unsigned int> generatedWords);
+thrust::device_vector<unsigned int> copyWordsToGPUStride(std::vector<std::vector<unsigned int>> generatedWords);
 void loadPairs(unsigned int* output, int output_size, int stride);
 //void readPairs();
 //std::unordered_set<std::bitset<word_size>> loadWords();
 //thrust::device_vector<unsigned int> parseWord(std::string input);
 //void parseWord(std::string input, thrust::device_vector<unsigned int>& words);
-//thrust::device_vector<unsigned int> readWords();
-//thrust::device_vector<unsigned int> readWords(std::unordered_set<std::bitset<word_size>> generatedWords);
+//thrust::device_vector<unsigned int> copyWordsToGPU();
+//thrust::device_vector<unsigned int> copyWordsToGPU(std::unordered_set<std::bitset<word_size>> generatedWords);
 
 __global__ void searchHammingOne(unsigned int* words, unsigned int* output, unsigned int wordsCount, unsigned int subwords_count, unsigned int ints_per_words_count, unsigned int bits_per_subword)
 {
@@ -73,13 +75,15 @@ __global__ void searchHammingOne(unsigned int* words, unsigned int* output, unsi
 	delete[] word;
 }
 
-#define VERBOSE_PAIRS
+//#define VERBOSE_PAIRS
 int main()
 {
 	generator = WordsGenerator<word_size, words_count>(words_file_name, pairs_file_name);
 	std::cout << "Reading data..." << std::endl;
-	auto generatedWords = loadWordsForGPU();
-	auto words = readWords(generatedWords);
+	//auto generatedWords = loadWordsForGPU();
+	//auto words = copyWordsToGPU(generatedWords);
+	auto generatedWords = loadWordsForGPUStride();
+	auto words = copyWordsToGPUStride(generatedWords);
 	auto wordsPtr = thrust::raw_pointer_cast(words.begin().base());
 	std::cout << "Done!" << std::endl;
 
@@ -98,7 +102,7 @@ int main()
 	cudaMalloc(&d_output, output_size);
 	h_output = new unsigned int[output_ints_count]();
 
-	loadPairs(h_output, output_size, ints_per_words_count);
+	//loadPairs(h_output, output_size, ints_per_words_count);
 
 	float time;
 	cudaEvent_t start, stop;
@@ -164,22 +168,51 @@ std::vector<unsigned> loadWordsForGPU()
 	return generator.generateWordsForGPU();
 }
 
+std::vector<std::vector<unsigned int>> loadWordsForGPUStride()
+{
+	return generator.generateWordsForGPUStrieded();
+}
+
+
 void loadPairs(unsigned int* output, int output_size, int stride)
 {
 	return generator.generatePairsForGPU(output, output_size, stride);
 }
 
-thrust::device_vector<unsigned int> readWords(std::vector<unsigned int> generatedWords)
+thrust::device_vector<unsigned int> copyWordsToGPU(std::vector<unsigned int> generatedWords)
 {
 	Stopwatch stopwatch;
 	thrust::device_vector<unsigned int> words;
 	std::cout << "Copying to GPU memory" << std::endl;
 	stopwatch.Start();
+
 	words.insert(words.begin(), generatedWords.begin(), generatedWords.end());
 	stopwatch.Stop();
 
 	return words;
 }
+
+thrust::device_vector<unsigned int> copyWordsToGPUStride(std::vector<std::vector<unsigned int>> generatedWords)
+{
+	Stopwatch stopwatch;
+	thrust::device_vector<unsigned int> words;
+	std::cout << "Copying to GPU memory" << std::endl;
+	stopwatch.Start();
+
+	for (auto & subwords : generatedWords)
+	{
+		//if (words.size() == 0)
+		//	words.insert(words.begin(), subwords.begin(), subwords.end());
+		//else 
+			words.insert(words.end(), subwords.begin(), subwords.end());
+
+	}
+
+	stopwatch.Stop();
+
+	return words;
+}
+
 
 //void readPairs()
 //{
@@ -239,7 +272,7 @@ thrust::device_vector<unsigned int> readWords(std::vector<unsigned int> generate
 //	//generator.generatePairs();
 //}
 
-//thrust::device_vector<unsigned int> readWords(std::unordered_set<std::bitset<word_size>> generatedWords)
+//thrust::device_vector<unsigned int> copyWordsToGPU(std::unordered_set<std::bitset<word_size>> generatedWords)
 //{
 //
 //	Stopwatch stopwatch;
@@ -267,7 +300,7 @@ thrust::device_vector<unsigned int> readWords(std::vector<unsigned int> generate
 //	return words;
 //}
 
-//thrust::device_vector<unsigned int> readWords()
+//thrust::device_vector<unsigned int> copyWordsToGPU()
 //{
 //	std::ifstream wordsStream{ words_file_name };
 //	Stopwatch stopwatch;
